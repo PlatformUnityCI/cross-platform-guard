@@ -4,7 +4,6 @@ on:
   workflow_call:
     inputs:
       language:
-        # future: enable language-specific rules
         type: string
       pytest_mark:
         required: false
@@ -59,9 +58,8 @@ jobs:
         uses: actions/github-script@v8
         with:
           script: |
-            const prNumber = ${{ github.event.pull_request != null }}.number;
-      
-            if (!prNumber) {
+            const pr = context.payload.pull_request;
+            if (!pr) {
               console.log("⚠️ No PR context - skipping cleanup");
               return;
             }
@@ -69,7 +67,7 @@ jobs:
             const comments = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: prNumber,
+              issue_number: pr.number,
             });
       
             for (const c of comments.data) {
@@ -88,23 +86,30 @@ jobs:
         with:
           script: |
             const fs = require('fs');
+      
+            const pr = context.payload.pull_request;
+            if (!pr) {
+              console.log("⚠️ No PR context - skipping PR description update");
+              return;
+            }
+      
             const newSummary = fs.readFileSync('summary.md', 'utf8');
-
-            let body = context.payload.pull_request.body || '';
+      
+            let body = pr.body || '';
             const start = '<!-- AI SUMMARY START -->';
             const end = '<!-- AI SUMMARY END -->';
             const regex = new RegExp(`${start}[\\s\\S]*?${end}`, 'g');
-
+      
             if (regex.test(body)) {
               body = body.replace(regex, newSummary);
             } else {
               body += "\n\n" + newSummary;
             }
-
+      
             await github.rest.pulls.update({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              pull_number: ${{ github.event.pull_request != null }}.number,
+              pull_number: pr.number,
               body
             });
 
@@ -115,14 +120,20 @@ jobs:
           script: |
             const fs = require('fs');
       
+            const pr = context.payload.pull_request;
+            if (!pr) {
+              console.log("⚠️ No PR context - skipping inline review comments");
+              return;
+            }
+      
             const comments = JSON.parse(fs.readFileSync('comments.json', 'utf8'));
       
             if (comments.length === 0) return;
       
-            const commit_id = context.payload.pull_request.head.sha;
+            const commit_id = pr.head.sha;
       
             const reviewComments = comments
-              .filter(c => c.path && c.line) // evitar basura
+              .filter(c => c.path && c.line)
               .map(c => {
                 const severity = (c.severity || "low").toUpperCase();
                 const score = c.score || 1;
@@ -140,13 +151,12 @@ jobs:
             await github.rest.pulls.createReview({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              pull_number: context.payload.pull_request?.number,
+              pull_number: pr.number,
               commit_id,
               event: "COMMENT",
               comments: reviewComments
             });
       
-            // 🚦 bloquear solo si HIGH
             if (comments.some(c => c.severity === "high")) {
               core.setFailed("🔴 High severity issues detected");
             }
@@ -157,21 +167,24 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const prUrl = context.payload.pull_request.html_url;
       
-            // 🚫 evitar errores en forks (permisos limitados)
-            if (context.payload.pull_request.head.repo.fork) {
+            const pr = context.payload.pull_request;
+            if (!pr) {
+              console.log("⚠️ No PR context - skipping issue creation");
+              return;
+            }
+      
+            if (pr.head.repo.fork) {
               console.log("⚠️ Fork detected - skipping issue creation");
               return;
             }
       
             const comments = JSON.parse(fs.readFileSync('comments.json', 'utf8'));
             const ISSUE_SEVERITIES = ["medium", "high"];
-            
-            // 🧹 filtrar basura + asegurar path válido
+      
             const filtered = comments.filter(c => {
               const severity = (c.severity || "").toLowerCase();
-            
+      
               return (
                 c.path &&
                 !c.path.includes("test") &&
@@ -179,21 +192,18 @@ jobs:
               );
             });
       
-            // 📦 agrupar por archivo
             const grouped = {};
             for (const c of filtered) {
               if (!grouped[c.path]) grouped[c.path] = [];
               grouped[c.path].push(c);
             }
       
-            // 📚 traer issues existentes
             const existing = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
               state: "open"
             });
       
-            // 📝 crear issues por archivo
             for (const file in grouped) {
               const title = `[QA] Issues en ${file}`;
       
@@ -212,6 +222,8 @@ jobs:
                 body += `- ${icon} ${severity}(${score}) → Línea ${line}: ${text}\n`;
               }
       
+              body += `\n🔗 PR: ${pr.html_url}`;
+      
               await github.rest.issues.create({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -227,15 +239,19 @@ jobs:
           script: |
             const fs = require('fs');
       
-            // 🚫 evitar forks
-            if (context.payload.pull_request.head.repo.fork) {
+            const pr = context.payload.pull_request;
+            if (!pr) {
+              console.log("⚠️ No PR context - skipping issue closing");
+              return;
+            }
+      
+            if (pr.head.repo.fork) {
               console.log("⚠️ Fork detected - skipping issue closing");
               return;
             }
       
             const comments = JSON.parse(fs.readFileSync('comments.json', 'utf8'));
       
-            // archivos que siguen teniendo problemas
             const activeFiles = new Set(
               comments
                 .filter(c => c.path && !c.path.includes("test"))
@@ -253,7 +269,6 @@ jobs:
       
               const file = issue.title.replace("[QA] Issues en ", "");
       
-              // 🔥 si ya no hay problemas → cerrar
               if (!activeFiles.has(file)) {
                 console.log(`Closing issue for ${file}`);
       
