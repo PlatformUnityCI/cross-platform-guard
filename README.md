@@ -21,28 +21,34 @@
 It decouples **quality logic** from business code, allowing teams to apply a standardized QA pipeline everywhere.
 
 ---
-
 ## 🎯 Purpose
 
-- 🔄 Reuse a single QA pipeline across multiple repositories
-- 🧪 Execute automated tests (Python / pytest for now)
 - 🤖 Analyze Pull Request diffs using AI-driven rules
 - 💬 Generate inline code review comments automatically
 - 🚦 Classify issues by severity (Low / Medium / High)
 - 🔒 Block PRs only when critical issues are detected
 - 📊 Create and manage issues dynamically
+- 🔌 Integrate with any testing pipeline (Python, Playwright, etc.)
 
 ---
+## 🧠 Design Principles
 
+- **Separation of Concerns** → Testing and quality analysis are decoupled
+- **Reusability** → One engine, multiple repositories
+- **Scalability** → Supports multi-language pipelines
+- **Non-intrusive** → No need to modify business logic repositories
+
+---
 ## ⚙️ How It Works
 
 ```text
 Repository (consumer)
         │
-        ▼
-Reusable Workflow (this repo)
+        ├── 🧪 Run Tests (local pipeline)
         │
-        ├── 🧪 Run Tests
+        ▼
+Cross Platform Guard (this repo)
+        │
         ├── 🤖 Analyze PR Diff
         ├── 💬 Inline Comments
         ├── 📊 Issue Generation
@@ -58,8 +64,7 @@ cross-platform-guard/
 ├── lib/ai_review/         # AI analysis engine
 ├── docs/                  # Documentation
 ├── examples/              # Usage examples
-├── requirements.txt
-└── README.md
+├── README.md
 ```
 ---
 🚀 Usage
@@ -72,7 +77,7 @@ on:
 
 jobs:
   qa:
-    uses: SebasCouto/cross-platform-guard/.github/workflows/qa-engine.yml@main
+    uses: PlatformUnityCI/cross-platform-guard/.github/workflows/qa-engine.yml@main
     with:
       language: python
       pytest_mark: regression
