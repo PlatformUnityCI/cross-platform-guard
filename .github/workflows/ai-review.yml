@@ -59,12 +59,19 @@ jobs:
         uses: actions/github-script@v8
         with:
           script: |
+            const prNumber = ${{ github.event.pull_request != null }}.number;
+      
+            if (!prNumber) {
+              console.log("⚠️ No PR context - skipping cleanup");
+              return;
+            }
+      
             const comments = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.issue.number,
+              issue_number: prNumber,
             });
-
+      
             for (const c of comments.data) {
               if (c.user.type === "Bot" && c.body.includes("QA AI Review")) {
                 await github.rest.issues.deleteComment({
@@ -97,7 +104,7 @@ jobs:
             await github.rest.pulls.update({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              pull_number: context.issue.number,
+              pull_number: ${{ github.event.pull_request != null }}.number,
               body
             });
 
@@ -133,7 +140,7 @@ jobs:
             await github.rest.pulls.createReview({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              pull_number: context.issue.number,
+              pull_number: context.payload.pull_request?.number,
               commit_id,
               event: "COMMENT",
               comments: reviewComments
