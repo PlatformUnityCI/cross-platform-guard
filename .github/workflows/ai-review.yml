@@ -9,6 +9,9 @@ on:
         required: false
         type: string
         default: regression
+    secrets:
+      CROSS_PLATFORM_GUARD_TOKEN:
+        required: true
 
 permissions:
   contents: read
@@ -44,6 +47,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: PlatformUnityCI/cross-platform-guard
+          token: ${{ secrets.CROSS_PLATFORM_GUARD_TOKEN }}
           path: qa-engine
 
       # 🔥 JSON estructurado
