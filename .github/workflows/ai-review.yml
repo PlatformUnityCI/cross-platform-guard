@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       language:
-        required: true
+        # future: enable language-specific rules
         type: string
       pytest_mark:
         required: false
@@ -17,93 +17,109 @@ permissions:
   checks: write
   issues: write
 
-jobs:
-  run-tests:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout caller repo
-        uses: actions/checkout@v6
-
-      - name: Set up Python
-        if: inputs.language == 'python'
-        uses: actions/setup-python@v6
-        with:
-          python-version: 3.12.0
-
-      - name: Install dependencies (Python)
-        if: inputs.language == 'python'
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt -I
-
-      - name: Run tests (Python)
-        if: inputs.language == 'python'
-        run: |
-          mkdir -p report
-          pytest -m ${{ inputs.pytest_mark }} \
-            --junitxml=report/junit.xml \
-            --html=report/html-report.html \
-            --self-contained-html
-
-      - name: Upload report
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: test-report
-          path: report
-
+jobs:  
   ai-review:
     runs-on: ubuntu-latest
-    needs: run-tests
 
     steps:
-      - name: Checkout caller repo
+      - name: Checkout repository
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
       - name: Get PR diff
         run: |
-          git fetch origin +refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}
-          git diff origin/${{ github.base_ref }}...HEAD > pr.diff
+          git fetch origin ${{ github.event.pull_request.base.ref }}
+          git diff origin/${{ github.event.pull_request.base.ref }}...HEAD > pr.diff
 
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: 3.12.0
 
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
+      # 🔥 JSON estructurado
       - name: Generate AI findings
-        run: python lib_core/ai_review/analyze_pr.py pr.diff > comments.json
+        run: python lib/ai_review/analyze_pr.py pr.diff > comments.json
 
       - name: Generate PR summary
-        run: python lib_core/ai_review/summarize_pr.py pr.diff > summary.md
+        run: python lib/ai_review/summarize_pr.py pr.diff > summary.md
 
+      # 🧹 limpiar comentarios previos
+      - name: Clean previous bot comments
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            for (const c of comments.data) {
+              if (c.user.type === "Bot" && c.body.includes("QA AI Review")) {
+                await github.rest.issues.deleteComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: c.id,
+                });
+              }
+            }
+
+      # 🧾 actualizar descripción
+      - name: Update PR description
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs');
+            const newSummary = fs.readFileSync('summary.md', 'utf8');
+
+            let body = context.payload.pull_request.body || '';
+            const start = '<!-- AI SUMMARY START -->';
+            const end = '<!-- AI SUMMARY END -->';
+            const regex = new RegExp(`${start}[\\s\\S]*?${end}`, 'g');
+
+            if (regex.test(body)) {
+              body = body.replace(regex, newSummary);
+            } else {
+              body += "\n\n" + newSummary;
+            }
+
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+              body
+            });
+
+      # 💥 comentarios inline
       - name: Post inline review comments
         uses: actions/github-script@v8
         with:
           script: |
             const fs = require('fs');
-
+      
             const comments = JSON.parse(fs.readFileSync('comments.json', 'utf8'));
-
-            if (!comments.length) return;
-
+      
+            if (comments.length === 0) return;
+      
             const commit_id = context.payload.pull_request.head.sha;
-
+      
             const reviewComments = comments
-              .filter(c => c.path && c.line)
-              .map(c => ({
-                path: c.path,
-                line: c.line,
-                body: `${c.icon || "🟢"} ${(c.severity || "low").toUpperCase()}(${c.score || 1}) → ${c.body || "No description"}`
-              }));
-
-            if (!reviewComments.length) return;
-
+              .filter(c => c.path && c.line) // evitar basura
+              .map(c => {
+                const severity = (c.severity || "low").toUpperCase();
+                const score = c.score || 1;
+                const icon = c.icon || "🟢";
+      
+                return {
+                  path: c.path,
+                  line: c.line,
+                  body: `${icon} ${severity}(${score}) → ${c.body || "No description"}`
+                };
+              });
+      
+            if (reviewComments.length === 0) return;
+      
             await github.rest.pulls.createReview({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -112,3 +128,123 @@ jobs:
               event: "COMMENT",
               comments: reviewComments
             });
+      
+            // 🚦 bloquear solo si HIGH
+            if (comments.some(c => c.severity === "high")) {
+              core.setFailed("🔴 High severity issues detected");
+            }
+
+      # 📊 crear issues agrupados
+      - name: Create grouped issues
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs');
+            const prUrl = context.payload.pull_request.html_url;
+      
+            // 🚫 evitar errores en forks (permisos limitados)
+            if (context.payload.pull_request.head.repo.fork) {
+              console.log("⚠️ Fork detected - skipping issue creation");
+              return;
+            }
+      
+            const comments = JSON.parse(fs.readFileSync('comments.json', 'utf8'));
+            const ISSUE_SEVERITIES = ["medium", "high"];
+            
+            // 🧹 filtrar basura + asegurar path válido
+            const filtered = comments.filter(c => {
+              const severity = (c.severity || "").toLowerCase();
+            
+              return (
+                c.path &&
+                !c.path.includes("test") &&
+                ISSUE_SEVERITIES.includes(severity)
+              );
+            });
+      
+            // 📦 agrupar por archivo
+            const grouped = {};
+            for (const c of filtered) {
+              if (!grouped[c.path]) grouped[c.path] = [];
+              grouped[c.path].push(c);
+            }
+      
+            // 📚 traer issues existentes
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open"
+            });
+      
+            // 📝 crear issues por archivo
+            for (const file in grouped) {
+              const title = `[QA] Issues en ${file}`;
+      
+              const exists = existing.data.some(i => i.title === title);
+              if (exists) continue;
+      
+              let body = `Archivo: ${file}\n\n`;
+      
+              for (const i of grouped[file]) {
+                const severity = (i.severity || "low").toUpperCase();
+                const score = i.score || 1;
+                const icon = i.icon || "🟢";
+                const line = i.line || "?";
+                const text = i.body || "No description";
+      
+                body += `- ${icon} ${severity}(${score}) → Línea ${line}: ${text}\n`;
+              }
+      
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body
+              });
+            }
+            
+      # 🧹 cerrar issues resueltos automáticamente
+      - name: Close resolved issues
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs');
+      
+            // 🚫 evitar forks
+            if (context.payload.pull_request.head.repo.fork) {
+              console.log("⚠️ Fork detected - skipping issue closing");
+              return;
+            }
+      
+            const comments = JSON.parse(fs.readFileSync('comments.json', 'utf8'));
+      
+            // archivos que siguen teniendo problemas
+            const activeFiles = new Set(
+              comments
+                .filter(c => c.path && !c.path.includes("test"))
+                .map(c => c.path)
+            );
+      
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open"
+            });
+      
+            for (const issue of existing.data) {
+              if (!issue.title.startsWith("[QA] Issues en ")) continue;
+      
+              const file = issue.title.replace("[QA] Issues en ", "");
+      
+              // 🔥 si ya no hay problemas → cerrar
+              if (!activeFiles.has(file)) {
+                console.log(`Closing issue for ${file}`);
+      
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  state: "closed"
+                });
+              }
+            }
