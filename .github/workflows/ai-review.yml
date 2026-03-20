@@ -41,12 +41,18 @@ jobs:
         with:
           python-version: 3.12.0
 
+      - name: Checkout QA Engine
+        uses: actions/checkout@v6
+        with:
+          repository: PlatformUnityCI/cross-platform-guard
+          path: qa-engine
+
       # 🔥 JSON estructurado
       - name: Generate AI findings
-        run: python lib/ai_review/analyze_pr.py pr.diff > comments.json
-
+        run: python qa-engine/lib/ai_review/analyze_pr.py pr.diff > comments.json
+      
       - name: Generate PR summary
-        run: python lib/ai_review/summarize_pr.py pr.diff > summary.md
+        run: python qa-engine/lib/ai_review/summarize_pr.py pr.diff > summary.md
 
       # 🧹 limpiar comentarios previos
       - name: Clean previous bot comments
