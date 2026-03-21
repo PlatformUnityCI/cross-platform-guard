@@ -2,22 +2,10 @@ name: PR Governance
 
 on:
   workflow_call:
-    inputs:
-      engine_paths:
-        required: false
-        type: string
-        default: "lib/ai_review/**"
-      workflow_paths:
-        required: false
-        type: string
-        default: ".github/workflows/**"
-      docs_paths:
-        required: false
-        type: string
-        default: "README.md,docs/**"
 
 permissions:
   contents: read
+  issues: write
   pull-requests: write
 
 jobs:
@@ -25,83 +13,112 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
+      - name: Read PR context
+        id: pr_context
+        uses: actions/github-script@v8
         with:
-          fetch-depth: 0
+          script: |
+            const pr = context.payload.pull_request;
+            if (!pr) {
+              core.setFailed("No pull_request context found.");
+              return;
+            }
 
-      - name: Detect changed files
-        id: changes
-        uses: tj-actions/changed-files@v45
+            core.setOutput("number", String(pr.number));
+            core.setOutput("title", pr.title);
+
+      - name: List changed files from PR
+        id: files
+        uses: actions/github-script@v8
         with:
-          files_yaml: |
-            engine:
-              - lib/ai_review/**
-            workflow:
-              - .github/workflows/**
-            documentation:
-              - README.md
-              - docs/**
+          script: |
+            const pr = context.payload.pull_request;
+            if (!pr) {
+              core.setFailed("No pull_request context found.");
+              return;
+            }
+
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: pr.number,
+              per_page: 100
+            });
+
+            const filenames = files.map(f => f.filename);
+
+            const engineChanged = filenames.some(name => name.startsWith("lib/ai_review/"));
+            const workflowChanged = filenames.some(name => name.startsWith(".github/workflows/"));
+            const docsChanged = filenames.some(name => name === "README.md" || name.startsWith("docs/"));
+
+            core.setOutput("engine_changed", String(engineChanged));
+            core.setOutput("workflow_changed", String(workflowChanged));
+            core.setOutput("docs_changed", String(docsChanged));
+            core.setOutput("filenames", JSON.stringify(filenames));
 
       - name: Apply labels
         uses: actions/github-script@v8
         with:
           script: |
             const pr = context.payload.pull_request;
-            if (!pr) return;
-
-            const labelsToAdd = [];
-
-            const engineChanged = `${{ steps.changes.outputs.engine_any_changed }}` === 'true';
-            const workflowChanged = `${{ steps.changes.outputs.workflow_any_changed }}` === 'true';
-            const docsChanged = `${{ steps.changes.outputs.documentation_any_changed }}` === 'true';
-
-            if (engineChanged) labelsToAdd.push("engine");
-            if (workflowChanged) labelsToAdd.push("workflow");
-            if (docsChanged) labelsToAdd.push("documentation");
-
-            if (labelsToAdd.length > 0) {
-              await github.rest.issues.addLabels({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: pr.number,
-                labels: labelsToAdd
-              });
+            if (!pr) {
+              core.setFailed("No pull_request context found.");
+              return;
             }
+
+            const labels = [];
+            if ("${{ steps.files.outputs.engine_changed }}" === "true") labels.push("engine");
+            if ("${{ steps.files.outputs.workflow_changed }}" === "true") labels.push("workflow");
+            if ("${{ steps.files.outputs.docs_changed }}" === "true") labels.push("documentation");
+
+            if (labels.length === 0) {
+              core.notice("No matching labels to apply.");
+              return;
+            }
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+              labels
+            });
 
       - name: Suggest PR title
         uses: actions/github-script@v8
         with:
           script: |
             const pr = context.payload.pull_request;
-            if (!pr) return;
+            if (!pr) {
+              core.setFailed("No pull_request context found.");
+              return;
+            }
 
-            const { data: issue } = await github.rest.issues.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: pr.number,
-            });
-
-            const labels = issue.labels.map(l => l.name);
             const title = pr.title;
+            const marker = "<!-- pr-title-suggester -->";
+
+            const engineChanged = "${{ steps.files.outputs.engine_changed }}" === "true";
+            const workflowChanged = "${{ steps.files.outputs.workflow_changed }}" === "true";
+            const docsChanged = "${{ steps.files.outputs.docs_changed }}" === "true";
 
             let suggestedPrefix = null;
             let reason = null;
 
-            if (labels.includes("engine")) {
+            if (engineChanged) {
               suggestedPrefix = "feat:";
-              reason = "changes detected in engine paths";
-            } else if (labels.includes("workflow")) {
+              reason = "changes detected in lib/ai_review/**";
+            } else if (workflowChanged) {
               suggestedPrefix = "chore:";
-              reason = "changes detected in workflow paths";
-            } else if (labels.includes("documentation")) {
+              reason = "changes detected in .github/workflows/**";
+            } else if (docsChanged) {
               suggestedPrefix = "docs:";
               reason = "documentation-only changes detected";
             }
 
-            if (!suggestedPrefix) return;
+            if (!suggestedPrefix) {
+              core.notice("No suggestion rule matched.");
+              return;
+            }
 
-            const marker = "<!-- pr-title-suggester -->";
             const cleanedTitle = title.replace(/^(feat:|fix:|docs:|chore:|refactor:|perf:)\s*/i, "").trim();
 
             const body = `${marker}
@@ -117,7 +134,7 @@ jobs:
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: pr.number,
+              issue_number: pr.number
             });
 
             const existing = comments.find(c =>
@@ -145,29 +162,29 @@ jobs:
         with:
           script: |
             const pr = context.payload.pull_request;
-            if (!pr) return;
+            if (!pr) {
+              core.setFailed("No pull_request context found.");
+              return;
+            }
 
-            const { data: issue } = await github.rest.issues.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: pr.number,
-            });
-
-            const labels = issue.labels.map(l => l.name);
             const title = pr.title;
+
+            const engineChanged = "${{ steps.files.outputs.engine_changed }}" === "true";
+            const workflowChanged = "${{ steps.files.outputs.workflow_changed }}" === "true";
+            const docsChanged = "${{ steps.files.outputs.docs_changed }}" === "true";
 
             let expected = null;
 
-            if (labels.includes("engine")) {
+            if (engineChanged) {
               expected = "feat:";
-            } else if (labels.includes("workflow")) {
+            } else if (workflowChanged) {
               expected = "chore:";
-            } else if (labels.includes("documentation")) {
+            } else if (docsChanged) {
               expected = "docs:";
             }
 
             if (!expected) {
-              core.notice("No label-based release rule matched.");
+              core.notice("No title rule matched. Skipping validation.");
               return;
             }
 
