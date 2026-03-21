@@ -1,0 +1,15 @@
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "README.md"
+          - "docs/**"
+
+workflow:
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/workflows/**"
+
+engine:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "lib/ai_review/**"

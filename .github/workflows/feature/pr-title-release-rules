@@ -1,0 +1,113 @@
+name: PR Title Suggester
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  suggest-title:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Suggest PR title prefix
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            if (!pr) {
+              console.log("No PR context found.");
+              return;
+            }
+
+            const labels = pr.labels.map(label => label.name);
+            const title = pr.title;
+
+            let suggestedPrefix = null;
+            let reason = null;
+
+            if (labels.includes("engine")) {
+              suggestedPrefix = "feat:";
+              reason = "changes detected in lib/ai_review/**";
+            } else if (labels.includes("workflow")) {
+              suggestedPrefix = "chore:";
+              reason = "changes detected in .github/workflows/**";
+            } else if (labels.includes("documentation")) {
+              suggestedPrefix = "docs:";
+              reason = "documentation-only changes detected";
+            }
+
+            if (!suggestedPrefix) {
+              console.log("No matching labels found. Skipping suggestion.");
+              return;
+            }
+
+            const alreadyValid = title.startsWith(suggestedPrefix);
+
+            const marker = "<!-- pr-title-suggester -->";
+
+            const suggestionBody = `${marker}
+            ## 🏷️ PR Title Suggestion
+
+            Based on the changed files, the suggested prefix is:
+
+            \`${suggestedPrefix}\`
+
+            **Reason:** ${reason}
+
+            ### Suggested title example
+            \`${suggestedPrefix} ${title.replace(/^(feat:|fix:|docs:|chore:|refactor:|perf:)\s*/i, "").trim()}\`
+
+            Update the PR title before merging if needed.
+            `;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+            });
+
+            const existingComment = comments.find(comment =>
+              comment.user.type === "Bot" &&
+              comment.body.includes(marker)
+            );
+
+            if (alreadyValid) {
+              if (existingComment) {
+                await github.rest.issues.updateComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  comment_id: existingComment.id,
+                  body: `${marker}
+                  ✅ PR title already matches the suggested prefix: \`${suggestedPrefix}\``
+                });
+              } else {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: pr.number,
+                  body: `${marker}
+                  ✅ PR title already matches the suggested prefix: \`${suggestedPrefix}\``
+                });
+              }
+              return;
+            }
+
+            if (existingComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existingComment.id,
+                body: suggestionBody
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                body: suggestionBody
+              });
+            }
