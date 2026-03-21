@@ -46,14 +46,6 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: 3.12.0
-      
-      - name: Define QA Engine path
-        run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            echo "QA_ENGINE_PATH=." >> $GITHUB_ENV
-          else
-            echo "QA_ENGINE_PATH=qa-engine" >> $GITHUB_ENV
-          fi
 
       - name: Define QA Engine path
         run: |
@@ -63,6 +55,14 @@ jobs:
             echo "QA_ENGINE_PATH=qa-engine" >> $GITHUB_ENV
           fi
 
+      - name: Checkout QA Engine
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@v6
+        with:
+          repository: PlatformUnityCI/cross-platform-guard
+          token: ${{ secrets.CROSS_PLATFORM_GUARD_TOKEN }}
+          path: qa-engine
+          
       # 🔥 JSON estructurado
       - name: Generate AI findings
         run: python $QA_ENGINE_PATH/lib/ai_review/analyze_pr.py pr.diff > comments.json
