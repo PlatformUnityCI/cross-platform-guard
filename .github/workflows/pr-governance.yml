@@ -1,0 +1,178 @@
+name: PR Governance
+
+on:
+  workflow_call:
+    inputs:
+      engine_paths:
+        required: false
+        type: string
+        default: "lib/ai_review/**"
+      workflow_paths:
+        required: false
+        type: string
+        default: ".github/workflows/**"
+      docs_paths:
+        required: false
+        type: string
+        default: "README.md,docs/**"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  pr-governance:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed files
+        id: changes
+        uses: tj-actions/changed-files@v45
+        with:
+          files_yaml: |
+            engine:
+              - lib/ai_review/**
+            workflow:
+              - .github/workflows/**
+            documentation:
+              - README.md
+              - docs/**
+
+      - name: Apply labels
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            if (!pr) return;
+
+            const labelsToAdd = [];
+
+            const engineChanged = `${{ steps.changes.outputs.engine_any_changed }}` === 'true';
+            const workflowChanged = `${{ steps.changes.outputs.workflow_any_changed }}` === 'true';
+            const docsChanged = `${{ steps.changes.outputs.documentation_any_changed }}` === 'true';
+
+            if (engineChanged) labelsToAdd.push("engine");
+            if (workflowChanged) labelsToAdd.push("workflow");
+            if (docsChanged) labelsToAdd.push("documentation");
+
+            if (labelsToAdd.length > 0) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                labels: labelsToAdd
+              });
+            }
+
+      - name: Suggest PR title
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            if (!pr) return;
+
+            const { data: issue } = await github.rest.issues.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+            });
+
+            const labels = issue.labels.map(l => l.name);
+            const title = pr.title;
+
+            let suggestedPrefix = null;
+            let reason = null;
+
+            if (labels.includes("engine")) {
+              suggestedPrefix = "feat:";
+              reason = "changes detected in engine paths";
+            } else if (labels.includes("workflow")) {
+              suggestedPrefix = "chore:";
+              reason = "changes detected in workflow paths";
+            } else if (labels.includes("documentation")) {
+              suggestedPrefix = "docs:";
+              reason = "documentation-only changes detected";
+            }
+
+            if (!suggestedPrefix) return;
+
+            const marker = "<!-- pr-title-suggester -->";
+            const cleanedTitle = title.replace(/^(feat:|fix:|docs:|chore:|refactor:|perf:)\s*/i, "").trim();
+
+            const body = `${marker}
+            ## 🏷️ PR Title Suggestion
+
+            Suggested prefix: \`${suggestedPrefix}\`
+
+            **Reason:** ${reason}
+
+            **Suggested title example**
+            \`${suggestedPrefix} ${cleanedTitle}\``;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+            });
+
+            const existing = comments.find(c =>
+              c.user.type === "Bot" && c.body.includes(marker)
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pr.number,
+                body
+              });
+            }
+
+      - name: Validate PR title
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            if (!pr) return;
+
+            const { data: issue } = await github.rest.issues.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: pr.number,
+            });
+
+            const labels = issue.labels.map(l => l.name);
+            const title = pr.title;
+
+            let expected = null;
+
+            if (labels.includes("engine")) {
+              expected = "feat:";
+            } else if (labels.includes("workflow")) {
+              expected = "chore:";
+            } else if (labels.includes("documentation")) {
+              expected = "docs:";
+            }
+
+            if (!expected) {
+              core.notice("No label-based release rule matched.");
+              return;
+            }
+
+            if (!title.startsWith(expected)) {
+              core.setFailed(`PR title must start with "${expected}". Current title: "${title}"`);
+            } else {
+              core.notice(`Valid PR title: ${title}`);
+            }
