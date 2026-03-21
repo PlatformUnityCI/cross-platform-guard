@@ -11,23 +11,29 @@ permissions:
 jobs:
   validate-title:
     runs-on: ubuntu-latest
+
     steps:
       - name: Validate PR title prefix
         uses: actions/github-script@v8
         with:
           script: |
             const pr = context.payload.pull_request;
+            if (!pr) {
+              console.log("No PR context found.");
+              return;
+            }
+
             const title = pr.title;
-            const labels = pr.labels.map(l => l.name);
+            const labels = pr.labels.map(label => label.name);
 
             let expected = null;
 
-            if (labels.includes("documentation")) {
-              expected = "docs:";
+            if (labels.includes("engine")) {
+              expected = "feat:";
             } else if (labels.includes("workflow")) {
               expected = "chore:";
-            } else if (labels.includes("engine")) {
-              expected = "feat:";
+            } else if (labels.includes("documentation")) {
+              expected = "docs:";
             }
 
             if (!expected) {
