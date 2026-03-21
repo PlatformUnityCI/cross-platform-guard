@@ -49,14 +49,14 @@ jobs:
 
       - name: Define QA Engine path
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
+          if [ "${{ github.repository }}" = "PlatformUnityCI/cross-platform-guard" ]; then
             echo "QA_ENGINE_PATH=." >> $GITHUB_ENV
           else
             echo "QA_ENGINE_PATH=qa-engine" >> $GITHUB_ENV
           fi
 
       - name: Checkout QA Engine
-        if: github.event_name != 'pull_request'
+        if: github.repository != 'PlatformUnityCI/cross-platform-guard'
         uses: actions/checkout@v6
         with:
           repository: PlatformUnityCI/cross-platform-guard
