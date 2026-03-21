@@ -1,0 +1,42 @@
+name: PR Title Release Check
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  pull-requests: write
+  contents: read
+
+jobs:
+  validate-title:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate PR title prefix
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const title = pr.title;
+            const labels = pr.labels.map(l => l.name);
+
+            let expected = null;
+
+            if (labels.includes("documentation")) {
+              expected = "docs:";
+            } else if (labels.includes("workflow")) {
+              expected = "chore:";
+            } else if (labels.includes("engine")) {
+              expected = "feat:";
+            }
+
+            if (!expected) {
+              core.notice("No release label detected; skipping title validation.");
+              return;
+            }
+
+            if (!title.startsWith(expected)) {
+              core.setFailed(`PR title must start with "${expected}" based on current labels. Current title: "${title}"`);
+            } else {
+              core.notice(`PR title is valid: ${title}`);
+            }
