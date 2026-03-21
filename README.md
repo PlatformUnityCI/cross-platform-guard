@@ -109,7 +109,14 @@ jobs:
 📊 QA Metrics Dashboard
 
 🔌 Plugin-based rule engine
+
 ```
+## 📦 Versioning
+
+This project uses automated semantic versioning.
+
+📄 [View Versioning Guide](./docs/VERSIONING.md)
+
 ---
 🧩 Philosophy
 
