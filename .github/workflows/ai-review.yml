@@ -134,46 +134,80 @@ jobs:
       - name: Post inline review comments
         uses: actions/github-script@v8
         with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-      
+
             const pr = context.payload.pull_request;
             if (!pr) {
               console.log("⚠️ No PR context - skipping inline review comments");
               return;
             }
-      
+
             const comments = JSON.parse(fs.readFileSync('comments.json', 'utf8'));
-      
+
             if (comments.length === 0) return;
-      
+
             const commit_id = pr.head.sha;
-      
+
+            function normalizePath(input) {
+              if (!input) return null;
+
+              let path = String(input).trim();
+
+              // Si vino mezclado con prefijos diff tipo "a/..." o "b/..."
+              // nos quedamos con la última ruta válida del lado derecho.
+              const bMatch = path.match(/b\/([^\s]+)/);
+              if (bMatch) {
+                path = bMatch[1];
+              }
+
+              // Si todavía quedó algo raro con espacios, tomar el último token
+              const parts = path.split(/\s+/).filter(Boolean);
+              path = parts[parts.length - 1];
+
+              // Remover prefijos a/ o b/
+              path = path.replace(/^a\//, '').replace(/^b\//, '');
+
+              return path;
+            }
+
             const reviewComments = comments
               .filter(c => c.path && c.line)
               .map(c => {
                 const severity = (c.severity || "low").toUpperCase();
                 const score = c.score || 1;
                 const icon = c.icon || "🟢";
-      
+                const normalizedPath = normalizePath(c.path);
+
                 return {
-                  path: c.path,
+                  path: normalizedPath,
                   line: c.line,
                   body: `${icon} ${severity}(${score}) → ${c.body || "No description"}`
                 };
+              })
+              .filter(c => c.path && c.line);
+
+            if (reviewComments.length === 0) {
+              console.log("⚠️ No valid inline comments after path normalization");
+              return;
+            }
+
+            try {
+              await github.rest.pulls.createReview({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: pr.number,
+                commit_id,
+                event: "COMMENT",
+                comments: reviewComments
               });
-      
-            if (reviewComments.length === 0) return;
-      
-            await github.rest.pulls.createReview({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: pr.number,
-              commit_id,
-              event: "COMMENT",
-              comments: reviewComments
-            });
-      
+            } catch (error) {
+              console.log("⚠️ Inline review failed. Dumping comments payload:");
+              console.log(JSON.stringify(reviewComments, null, 2));
+              throw error;
+            }
+
             if (comments.some(c => c.severity === "high")) {
               core.setFailed("🔴 High severity issues detected");
             }
