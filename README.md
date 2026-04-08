@@ -326,7 +326,7 @@ The PR title is the **single source of truth** for version bumps — not individ
 | PR governance (labels, title validation) | ✅ Done |
 | Automated release governance | ✅ Done |
 | Multi-language rule engine | ✅ Done |
-| LLM-powered diff analysis (OpenAI / Gemini) | 🔲 Planned |
+| LLM-powered diff analysis  | 🔲 Planned |
 | Rule configuration via YAML | 🔲 Planned |
 | QA metrics dashboard | 🔲 Planned |
 
