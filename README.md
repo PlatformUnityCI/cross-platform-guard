@@ -347,14 +347,3 @@ The PR title is the **single source of truth** for version bumps — not individ
 ## License
 
 MIT — see [LICENSE](LICENSE).
-
----
-
-## Author
-
-<p align="center">
-  <img src="https://img.shields.io/badge/Built%20by-Sebas%20Couto-0A66C2?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/Role-QA%20Engineer-blue?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/Focus-Automation-purple?style=for-the-badge" />
-  <img src="https://img.shields.io/badge/Approach-AI%20Driven-black?style=for-the-badge" />
-</p>
