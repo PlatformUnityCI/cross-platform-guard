@@ -241,4 +241,4 @@ This project uses automated semantic versioning.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE]([LICENSE](https://github.com/PlatformUnityCI/cross-platform-guard/blob/main/LICENSE.txt)).
