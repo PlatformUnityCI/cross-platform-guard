@@ -237,3 +237,8 @@ This project uses automated semantic versioning.
   <img src="https://img.shields.io/badge/Approach-AI%20Driven-black?style=for-the-badge" />
 </p>
 
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE).
